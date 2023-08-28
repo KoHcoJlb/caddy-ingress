@@ -11,6 +11,11 @@ import (
 	"time"
 )
 
+func skipIngress(i *networking.Ingress) bool {
+	_, ok := i.GetAnnotations()["kohcojlb.caddy-ingress-proxy/disable"]
+	return ok
+}
+
 type Controller struct {
 	client      *kubernetes.Clientset
 	addRoute    func(string)
@@ -43,14 +48,22 @@ func (c *Controller) worker(ctx context.Context) {
 	ingressInformer := informer.Networking().V1().Ingresses().Informer()
 	ingressInformer.AddEventHandler(cache.ResourceEventHandlerFuncs{
 		AddFunc: func(obj interface{}) {
-			c.add(obj.(*networking.Ingress))
+			if i := obj.(*networking.Ingress); !skipIngress(i) {
+				c.add(i)
+			}
 		},
 		UpdateFunc: func(oldObj, newObj interface{}) {
-			c.remove(oldObj.(*networking.Ingress))
-			c.add(newObj.(*networking.Ingress))
+			if i := oldObj.(*networking.Ingress); !skipIngress(i) {
+				c.remove(i)
+			}
+			if i := newObj.(*networking.Ingress); !skipIngress(i) {
+				c.add(i)
+			}
 		},
 		DeleteFunc: func(obj interface{}) {
-			c.remove(obj.(*networking.Ingress))
+			if i := obj.(*networking.Ingress); !skipIngress(i) {
+				c.remove(i)
+			}
 		},
 	})
 	ingressInformer.Run(ctx.Done())
