@@ -9,6 +9,7 @@ import (
 	"github.com/caddyserver/caddy/v2/modules/caddytls"
 	"github.com/go-logr/zapr"
 	"github.com/kohcojlb/caddy-ingress-proxy/controller"
+	"go.uber.org/zap"
 	"k8s.io/klog/v2"
 	"net/http"
 )
@@ -19,6 +20,8 @@ type Handler struct {
 
 	ctrl   *controller.Controller
 	proxy  reverseproxy.Handler
+	tls    *caddytls.TLS
+	logger *zap.SugaredLogger
 	routes map[string]bool
 }
 
@@ -39,7 +42,7 @@ func (h *Handler) ServeHTTP(writer http.ResponseWriter, request *http.Request, h
 }
 
 func (h *Handler) Provision(ctx caddy.Context) error {
-	logger := ctx.Logger().Sugar()
+	h.logger = ctx.Logger().Sugar()
 
 	klog.SetLogger(zapr.NewLogger(ctx.Logger()))
 
@@ -47,7 +50,7 @@ func (h *Handler) Provision(ctx caddy.Context) error {
 	if err != nil {
 		return err
 	}
-	tls := tlsApp.(*caddytls.TLS)
+	h.tls = tlsApp.(*caddytls.TLS)
 
 	h.routes = make(map[string]bool)
 	h.proxy.Upstreams = reverseproxy.UpstreamPool{
@@ -61,24 +64,31 @@ func (h *Handler) Provision(ctx caddy.Context) error {
 		return fmt.Errorf("provision reverse_proxy: %w", err)
 	}
 
-	h.ctrl, err = controller.New(h.KubeconfigPath, func(route string) {
-		err := tls.Manage([]string{route})
-		if err != nil {
-			logger.Errorf("manage certificate for %s: %s", route, err)
-		}
-
-		h.routes[route] = true
-		logger.Infof("Added ingress for %s", route)
-	}, func(route string) {
-		delete(h.routes, route)
-		logger.Infof("Removed ingress for %s", route)
-	})
+	h.ctrl, err = controller.New(h.KubeconfigPath, h)
 	if err != nil {
 		return err
 	}
 	h.ctrl.Start(ctx)
 
 	return nil
+}
+
+func (h *Handler) AddRoute(route string) {
+	h.logger.Infow("add route", "route", route)
+
+	err := h.tls.Manage([]string{route})
+	if err != nil {
+		h.logger.Errorf("manage certificate for %s: %s", route, err)
+	}
+
+	h.routes[route] = true
+	h.logger.Infof("Added ingress for %s", route)
+}
+
+func (h *Handler) RemoveRoute(route string) {
+	h.logger.Infow("remove route", "route", route)
+	delete(h.routes, route)
+	h.logger.Infof("Removed ingress for %s", route)
 }
 
 func (h *Handler) Cleanup() error {

@@ -16,14 +16,18 @@ func skipIngress(i *networking.Ingress) bool {
 	return ok
 }
 
-type Controller struct {
-	client      *kubernetes.Clientset
-	addRoute    func(string)
-	removeRoute func(string)
+type Router interface {
+	AddRoute(string)
+	RemoveRoute(string)
 }
 
-func New(kubeconfigPath string, addRoute func(route string), removeRoute func(string)) (*Controller, error) {
-	c := Controller{addRoute: addRoute, removeRoute: removeRoute}
+type Controller struct {
+	client *kubernetes.Clientset
+	router Router
+}
+
+func New(kubeconfigPath string, router Router) (*Controller, error) {
+	c := Controller{router: router}
 
 	config, err := clientcmd.BuildConfigFromFlags("", kubeconfigPath)
 	if err != nil {
@@ -71,12 +75,12 @@ func (c *Controller) worker(ctx context.Context) {
 
 func (c *Controller) add(ingress *networking.Ingress) {
 	for _, rule := range ingress.Spec.Rules {
-		c.addRoute(rule.Host)
+		c.router.AddRoute(rule.Host)
 	}
 }
 
 func (c *Controller) remove(ingress *networking.Ingress) {
 	for _, rule := range ingress.Spec.Rules {
-		c.removeRoute(rule.Host)
+		c.router.RemoveRoute(rule.Host)
 	}
 }
